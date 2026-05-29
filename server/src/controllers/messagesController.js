@@ -124,6 +124,7 @@ const stats = async (req, res) => {
     return res.json({
       totalMessages: agg._count || 0,
       totalCost: Number(agg._sum.costCharged || 0),
+      costPerMessage: COST_PER_MESSAGE,
       uniqueContacts: distinctContacts.length,
       byStatus: byStatus.reduce((acc, row) => {
         acc[row.status] = row._count;

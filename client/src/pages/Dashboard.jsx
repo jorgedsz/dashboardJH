@@ -9,6 +9,18 @@ const fmtMoney = (n) =>
     minimumFractionDigits: 2
   });
 
+// Per-message rate can be sub-cent (0.002, 0.005, etc.) so keep enough
+// fraction digits to actually show the value without rounding to $0.00.
+const fmtRate = (n) => {
+  const v = Number(n) || 0;
+  return v.toLocaleString('es-CO', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4
+  });
+};
+
 const fmtInt = (n) => (Number(n) || 0).toLocaleString('es-CO');
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-CO');
 
@@ -125,7 +137,7 @@ export default function Dashboard() {
           <StatCard
             label="Costo total"
             value={fmtMoney(stats?.totalCost)}
-            sub={`$${(0.01).toFixed(2)} por mensaje`}
+            sub={`${fmtRate(stats?.costPerMessage ?? 0.01)} por mensaje`}
           />
           <StatCard label="Contactos únicos" value={fmtInt(stats?.uniqueContacts)} />
         </div>
