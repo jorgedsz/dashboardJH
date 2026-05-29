@@ -76,6 +76,36 @@ Flow:
   Configure your GHL workflow with a conditional after the webhook step:
   *if response.blocked == true → Send Message with response.fallback_message*.
 
+## Capturing the bot's reply (`outputMessage`)
+
+The proxy already writes `inputMessage` when GHL fires the webhook. The
+reply has two paths:
+
+1. **Auto-capture (zero-config).** If your n8n responds with a JSON body
+   carrying one of `outputMessage`, `output`, `reply`, `response`,
+   `message`, `text`, `answer`, or `content`, the proxy stores it as the
+   message's outputMessage on the same row. Nothing to do.
+
+2. **Manual callback (if your n8n's response doesn't include the reply).**
+   The proxy injects a reserved key into the body it forwards to n8n:
+   ```json
+   { "__dashboardMessageId": 123, "...the rest of the GHL payload": "..." }
+   ```
+   At the very end of the n8n workflow, after the bot's reply is ready,
+   add an HTTP Request node:
+
+   ```
+   POST {DASHBOARD_BASE}/api/messages/{{ $('Webhook').first().json.body.__dashboardMessageId }}/response
+   Header: x-ingest-secret: <INGEST_SECRET>
+   Body  : { "outputMessage": "{{ $json.botReplyText }}" }
+   ```
+
+   That writes the reply to the same row. Set `errorMessage` instead (or
+   in addition) if the bot failed:
+   ```json
+   { "errorMessage": "OpenAI timed out" }
+   ```
+
 ## Recharge webhook
 
 ```

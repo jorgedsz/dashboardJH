@@ -166,4 +166,45 @@ function buildDailyQuery(where) {
   `;
 }
 
-module.exports = { ingest, list, stats };
+// POST /api/messages/:id/response — manual upstream callback. Used by
+// the n8n workflow to attach the bot's reply to the row created by the
+// proxy when the proxy couldn't auto-extract it from the upstream
+// response body. Authenticated by INGEST_SECRET (same secret already
+// shared with n8n).
+const setResponse = async (req, res) => {
+  try {
+    const secret = req.headers['x-ingest-secret'];
+    if (!secret || secret !== process.env.INGEST_SECRET) {
+      return res.status(401).json({ error: 'Invalid ingest secret' });
+    }
+
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'id must be an integer' });
+    }
+
+    const { outputMessage, errorMessage } = req.body || {};
+    if (typeof outputMessage !== 'string' || !outputMessage.trim()) {
+      return res.status(400).json({ error: 'outputMessage (non-empty string) is required' });
+    }
+
+    const cap = (s) => (s.length > 4000 ? `${s.slice(0, 4000)}…` : s);
+
+    const updated = await req.prisma.message.update({
+      where: { id },
+      data: {
+        outputMessage: cap(outputMessage.trim()),
+        ...(errorMessage ? { errorMessage: String(errorMessage).slice(0, 1000), status: 'error' } : {})
+      }
+    });
+    return res.json({ id: updated.id, outputMessage: updated.outputMessage });
+  } catch (err) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    console.error('setResponse error:', err.message);
+    return res.status(500).json({ error: 'Failed to update response' });
+  }
+};
+
+module.exports = { ingest, list, stats, setResponse };

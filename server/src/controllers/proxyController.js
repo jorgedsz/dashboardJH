@@ -86,7 +86,12 @@ async function proxyHandler(req, res) {
       data: { availableBalance: { decrement: COST_PER_MESSAGE } }
     });
 
-    // Forward to the upstream n8n webhook with the exact body received.
+    // Forward to the upstream n8n webhook. We inject the dashboard message
+    // id under a reserved key so the workflow can echo it back to the
+    // /api/messages/:id/response endpoint at the end, if it wants to
+    // record the bot's reply manually. The rest of the body is forwarded
+    // verbatim.
+    const forwardBody = { ...body, __dashboardMessageId: message.id };
     let upstreamStatus = 0;
     let upstreamBody = null;
     let upstreamContentType = 'application/json';
@@ -94,7 +99,7 @@ async function proxyHandler(req, res) {
       const upstreamRes = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(forwardBody)
       });
       upstreamStatus = upstreamRes.status;
       upstreamContentType = upstreamRes.headers.get('content-type') || 'application/json';
@@ -104,6 +109,18 @@ async function proxyHandler(req, res) {
           where: { id: message.id },
           data: { status: 'error', errorMessage: `Upstream ${upstreamStatus}: ${upstreamBody?.slice(0, 500)}` }
         });
+      } else {
+        // Auto-capture the bot's reply if n8n returned a JSON body shaped
+        // like a chat response. Common keys: reply, response, output,
+        // outputMessage, message, text. We don't error out if it doesn't
+        // parse — the workflow can still call /messages/:id/response.
+        const autoOutput = extractOutputMessage(upstreamBody, upstreamContentType);
+        if (autoOutput) {
+          await req.prisma.message.update({
+            where: { id: message.id },
+            data: { outputMessage: autoOutput }
+          });
+        }
       }
     } catch (err) {
       console.error('[proxy] upstream call failed:', err.message);
@@ -261,6 +278,44 @@ function extractFields(body) {
     contactName: contactName ? String(contactName) : null,
     inputMessage
   };
+}
+
+// Try to fish a string reply out of whatever n8n returned. Returns a
+// non-empty string on success, null otherwise. Handles:
+//   - plain text replies (returns the body as-is, trimmed, capped)
+//   - JSON object with one of the common chat-reply key names
+//   - JSON array — uses the first element's reply field
+const REPLY_KEYS = ['outputMessage', 'output', 'reply', 'response', 'message', 'text', 'answer', 'content'];
+function extractOutputMessage(rawBody, contentType) {
+  if (!rawBody || typeof rawBody !== 'string') return null;
+  const trimmed = rawBody.trim();
+  if (!trimmed) return null;
+  const looksJson = contentType?.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[');
+  if (looksJson) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const target = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (target && typeof target === 'object') {
+        for (const k of REPLY_KEYS) {
+          const v = target[k];
+          if (typeof v === 'string' && v.trim()) return capReply(v.trim());
+          if (v && typeof v === 'object') {
+            const inner = v.body || v.text || v.content || v.message;
+            if (typeof inner === 'string' && inner.trim()) return capReply(inner.trim());
+          }
+        }
+      }
+    } catch {
+      // not JSON after all — fall through to plain-text path
+    }
+  }
+  // Plain text body. Skip if it looks like a server status page or empty.
+  if (trimmed.length > 4000) return capReply(trimmed);
+  return capReply(trimmed);
+}
+function capReply(s) {
+  const MAX = 4000;
+  return s.length > MAX ? `${s.slice(0, MAX)}…` : s;
 }
 
 function safeStringify(obj) {
