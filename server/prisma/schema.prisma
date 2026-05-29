@@ -1,0 +1,42 @@
+// Single-tenant dashboard schema.
+// One owner account; one Message stream from n8n.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String   // bcrypt hash
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One row per n8n-processed message.
+// status: success | error
+// inputMessage  = what the human said
+// outputMessage = what the agent replied (null when status=error or pending)
+// costCharged   = billed amount for this message (default $0.01)
+model Message {
+  id            Int      @id @default(autoincrement())
+  sessionId     String   @default("default")
+  contactId     String?
+  contactName   String?
+  inputMessage  String   @db.Text
+  outputMessage String?  @db.Text
+  costCharged   Float    @default(0.01)
+  status        String   @default("success")
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sessionId, createdAt])
+  @@index([contactId, createdAt])
+}
