@@ -24,6 +24,11 @@ const fmtRate = (n) => {
 const fmtInt = (n) => (Number(n) || 0).toLocaleString('es-CO');
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-CO');
 
+// Auto-refresh interval. The dashboard re-fetches stats, the message list,
+// recharges and the current user (for the live balance) on this cadence so
+// a new message landed by the proxy shows up within seconds.
+const REFRESH_MS = 5000;
+
 export default function Dashboard() {
   const { user, logout, setUser } = useAuth();
 
@@ -36,6 +41,8 @@ export default function Dashboard() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [error, setError] = useState('');
   const [recharges, setRecharges] = useState([]);
 
@@ -43,14 +50,52 @@ export default function Dashboard() {
   const [savingMsg, setSavingMsg] = useState(false);
   const [msgSavedAt, setMsgSavedAt] = useState(0);
 
-  // Reload user (balance!) and recharges history every time we poll.
+  // Tick that increments every REFRESH_MS while the tab is visible. Every
+  // data-loading useEffect depends on this so they re-run on the same beat.
+  const [refreshTick, setRefreshTick] = useState(0);
   useEffect(() => {
-    authAPI.me().then((r) => {
-      setUser(r.data.user);
-      setEditMsg(r.data.user?.noBalanceMessage || '');
-    });
-    authAPI.listRecharges(10).then((r) => setRecharges(r.data.rows || [])).catch(() => {});
+    let id;
+    const start = () => {
+      if (id) return;
+      id = setInterval(() => setRefreshTick((t) => t + 1), REFRESH_MS);
+    };
+    const stop = () => {
+      if (!id) return;
+      clearInterval(id);
+      id = null;
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        setRefreshTick((t) => t + 1); // refresh immediately on focus
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
+
+  // Reload user (balance!) and recharges history on every tick.
+  useEffect(() => {
+    authAPI
+      .me()
+      .then((r) => {
+        setUser(r.data.user);
+        // Only seed the editable text the first time so we don't overwrite
+        // what the user is typing mid-edit.
+        setEditMsg((prev) => (prev ? prev : r.data.user?.noBalanceMessage || ''));
+      })
+      .catch(() => {});
+    authAPI
+      .listRecharges(10)
+      .then((r) => setRecharges(r.data.rows || []))
+      .catch(() => {});
+  }, [refreshTick]);
 
   const params = useMemo(() => {
     const p = { page, pageSize };
@@ -67,26 +112,36 @@ export default function Dashboard() {
     return p;
   }, [from, to]);
 
+  // First load uses the spinner; subsequent polls use the subtle
+  // "Actualizando…" indicator so the user doesn't see the page blink.
+  const hasLoadedOnce = stats !== null;
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (hasLoadedOnce) setRefreshing(true);
+    else setLoading(true);
+
     Promise.all([messagesAPI.list(params), messagesAPI.stats(statsParams)])
       .then(([listRes, statsRes]) => {
         if (cancelled) return;
         setRows(listRes.data.rows);
         setTotal(listRes.data.total);
         setStats(statsRes.data);
+        setLastUpdatedAt(Date.now());
         setError('');
       })
       .catch((e) => {
         if (cancelled) return;
         setError(e.response?.data?.error || 'Error al cargar datos');
       })
-      .finally(() => !cancelled && setLoading(false));
+      .finally(() => {
+        if (cancelled) return;
+        setLoading(false);
+        setRefreshing(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [params, statsParams]);
+  }, [params, statsParams, refreshTick]);
 
   const saveMessage = async () => {
     setSavingMsg(true);
@@ -112,12 +167,15 @@ export default function Dashboard() {
           <h1 className="text-lg font-semibold">dashboardJH</h1>
           <p className="text-xs text-gray-500">{user?.email}</p>
         </div>
-        <button
-          onClick={logout}
-          className="text-xs text-gray-400 hover:text-gray-200 border border-gray-800 hover:border-gray-700 rounded-lg px-3 py-1.5"
-        >
-          Cerrar sesión
-        </button>
+        <div className="flex items-center gap-3">
+          <LiveIndicator refreshing={refreshing} lastUpdatedAt={lastUpdatedAt} />
+          <button
+            onClick={logout}
+            className="text-xs text-gray-400 hover:text-gray-200 border border-gray-800 hover:border-gray-700 rounded-lg px-3 py-1.5"
+          >
+            Cerrar sesión
+          </button>
+        </div>
       </header>
 
       <main className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -326,6 +384,36 @@ export default function Dashboard() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function LiveIndicator({ refreshing, lastUpdatedAt }) {
+  // Re-render once a second so the "hace Xs" text stays current without
+  // forcing the whole dashboard to refetch.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const secondsAgo = lastUpdatedAt
+    ? Math.max(0, Math.floor((Date.now() - lastUpdatedAt) / 1000))
+    : null;
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-gray-500">
+      <span
+        className={`w-2 h-2 rounded-full ${
+          refreshing ? 'bg-amber-400 animate-pulse' : 'bg-green-500'
+        }`}
+        title={refreshing ? 'Actualizando…' : 'En vivo'}
+      />
+      {refreshing
+        ? <span>Actualizando…</span>
+        : secondsAgo != null
+          ? <span>Hace {secondsAgo}s</span>
+          : <span>En vivo</span>}
     </div>
   );
 }
