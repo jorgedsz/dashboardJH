@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const authRoutes = require('./routes/auth');
 const messageRoutes = require('./routes/messages');
+const proxyRoutes = require('./routes/proxy');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -25,6 +26,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // API routes.
 app.use('/api/auth', authRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/proxy', proxyRoutes);
 
 // Serve the built client (single-service deploy on Railway).
 const clientDist = path.join(__dirname, '..', 'public');

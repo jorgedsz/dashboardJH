@@ -24,7 +24,9 @@ api.interceptors.response.use(
 
 export const authAPI = {
   login: (email, password) => api.post('/auth/login', { email, password }),
-  me: () => api.get('/auth/me')
+  me: () => api.get('/auth/me'),
+  updateSettings: (payload) => api.put('/auth/settings', payload),
+  listRecharges: (limit) => api.get('/auth/recharges', { params: { limit } })
 };
 
 export const messagesAPI = {

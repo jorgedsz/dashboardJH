@@ -27,13 +27,22 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
+  const refresh = async () => {
+    try {
+      const { data } = await authAPI.me();
+      setUser(data.user);
+    } catch {
+      // swallow — if token went bad the interceptor handles redirect
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refresh, setUser }}>
       {children}
     </AuthContext.Provider>
   );

@@ -11,12 +11,35 @@ datasource db {
 }
 
 model User {
+  id                 Int      @id @default(autoincrement())
+  email              String   @unique
+  password           String   // bcrypt hash
+  name               String?
+  // Single-tenant balance model. availableBalance is what the proxy gate
+  // checks before forwarding to n8n; totalRecharged is a cumulative counter
+  // used as an audit total. Costs are debited from availableBalance only.
+  availableBalance   Float    @default(0)
+  totalRecharged     Float    @default(0)
+  // Plain-text message echoed back to the proxy caller when the balance is
+  // exhausted. Caller (GHL workflow) is responsible for using it to send a
+  // reply to the contact via its own Send Message step.
+  noBalanceMessage   String   @default("Lo siento, tu cuenta no tiene saldo disponible para enviar mensajes.")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// One row per successful recharge webhook call. Useful for showing the
+// owner a history in the dashboard and for reconciling against the payment
+// provider that triggered the webhook.
+model RechargeLog {
   id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String   // bcrypt hash
-  name      String?
+  amount    Float
+  source    String?  // e.g. "stripe", "whop", "manual"
+  reference String?  // external transaction id, idempotency key, etc.
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([reference])
 }
 
 // One row per n8n-processed message.
@@ -32,11 +55,20 @@ model Message {
   inputMessage  String   @db.Text
   outputMessage String?  @db.Text
   costCharged   Float    @default(0.01)
+  // success | error | blocked
+  // - success: proxy forwarded to n8n
+  // - error:   proxy forwarded but the upstream n8n call failed
+  // - blocked: not forwarded; balance was below cost when received. Cost=0.
   status        String   @default("success")
   errorMessage  String?
+  // Raw JSON body received from the source (kept as a string blob so we can
+  // replay or audit without enforcing a schema). Trimmed at ingest time to
+  // avoid storing oversized payloads.
+  rawPayload    String?  @db.Text
   createdAt     DateTime @default(now())
 
   @@index([createdAt])
   @@index([sessionId, createdAt])
   @@index([contactId, createdAt])
+  @@index([status, createdAt])
 }

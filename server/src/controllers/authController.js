@@ -32,9 +32,74 @@ const login = async (req, res) => {
   }
 };
 
-// GET /api/auth/me — returns the logged-in user (the owner).
+// GET /api/auth/me — returns the logged-in user with the latest balance
+// and the configurable no-balance message. authMiddleware only carries id
+// / email / name on req.user; we re-read to pick up balance changes that
+// happen between requests (e.g. a recharge webhook fired mid-session).
 const getMe = async (req, res) => {
-  res.json({ user: req.user });
+  const fresh = await req.prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      availableBalance: true,
+      totalRecharged: true,
+      noBalanceMessage: true
+    }
+  });
+  res.json({ user: fresh || req.user });
 };
 
-module.exports = { login, getMe };
+// PUT /api/auth/settings — owner-only. Updates the no-balance message
+// shown to callers when the gate blocks a forward. Anything else added
+// in the future (display name, etc.) lands here too.
+const updateSettings = async (req, res) => {
+  try {
+    const { noBalanceMessage } = req.body || {};
+    const data = {};
+    if (typeof noBalanceMessage === 'string') {
+      const trimmed = noBalanceMessage.trim();
+      if (trimmed.length > 1000) {
+        return res.status(400).json({ error: 'noBalanceMessage too long (max 1000 chars)' });
+      }
+      data.noBalanceMessage = trimmed || 'Lo siento, tu cuenta no tiene saldo disponible para enviar mensajes.';
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    const updated = await req.prisma.user.update({
+      where: { id: req.user.id },
+      data,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        availableBalance: true,
+        totalRecharged: true,
+        noBalanceMessage: true
+      }
+    });
+    res.json({ user: updated });
+  } catch (err) {
+    console.error('updateSettings error:', err.message);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+};
+
+// GET /api/auth/recharges — last N recharge log entries for the dashboard.
+const listRecharges = async (req, res) => {
+  try {
+    const take = Math.min(100, parseInt(req.query.limit || '20', 10));
+    const rows = await req.prisma.rechargeLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take
+    });
+    res.json({ rows });
+  } catch (err) {
+    console.error('listRecharges error:', err.message);
+    res.status(500).json({ error: 'Failed to list recharges' });
+  }
+};
+
+module.exports = { login, getMe, updateSettings, listRecharges };

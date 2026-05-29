@@ -50,6 +50,45 @@ Body  : { sessionId, contactId?, contactName?, inputMessage, outputMessage?, sta
 
 The server stamps `costCharged: 0.01` per row.
 
+## Proxy gate
+
+The dashboard can sit in front of your n8n webhook to act as a balance gate.
+
+```
+POST {API_BASE}/api/proxy/<PROXY_TOKEN>
+Body : whatever your upstream caller (GHL workflow) was already sending to n8n
+```
+
+Flow:
+- Balance ≥ $0.01 → message row recorded as `success`, balance debited,
+  body forwarded verbatim to `PROXY_TARGET_URL`. The upstream response is
+  mirrored back to the caller.
+- Balance < $0.01 → message row recorded as `blocked` (cost = 0), nothing
+  forwarded. Response body:
+  ```json
+  {
+    "blocked": true,
+    "reason": "no_balance",
+    "fallback_message": "<the noBalanceMessage configured in the dashboard>",
+    "available_balance": 0
+  }
+  ```
+  Configure your GHL workflow with a conditional after the webhook step:
+  *if response.blocked == true → Send Message with response.fallback_message*.
+
+## Recharge webhook
+
+```
+POST {API_BASE}/api/proxy/recharge
+Header: x-recharge-secret: <RECHARGE_SECRET>
+Body  : { "amount": 25, "source": "stripe", "reference": "ch_abc123" }
+```
+
+- `amount` is required and must be positive.
+- `reference` is treated as an idempotency key; the second hit with the same
+  reference is a no-op.
+- Every successful recharge appears in the dashboard's Recharges section.
+
 ## Railway deploy
 
 - Single service that runs `npm run start` from `server/` (server serves the
