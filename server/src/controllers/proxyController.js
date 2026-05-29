@@ -191,31 +191,75 @@ async function rechargeWebhook(req, res) {
 
 function extractFields(body) {
   if (!body || typeof body !== 'object') return {};
-  // Accept several common field names. GHL custom-data webhooks tend to
-  // surface `message` for the text and `sessionId` for the contact id, but
-  // other tools use slightly different keys — fall through gracefully.
+
+  // GHL workflows send two layers:
+  //   - top-level: the trigger payload (contact_id, full_name, message {…}, …)
+  //   - customData: the key/value pairs the user wired in the webhook step
+  // Prefer customData.* because the user controls those names; fall back to
+  // common top-level names otherwise.
+  const cd = body.customData || {};
+
+  // Some senders (GHL) ship `message` as an object { type, body }. Coerce
+  // it to a plain string before Prisma sees it.
+  const coerceText = (v) => {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (typeof v === 'object') {
+      // common shapes: { body: "..." }, { text: "..." }, { message: "..." }
+      const candidate = v.body || v.text || v.message || v.content;
+      if (typeof candidate === 'string') return candidate;
+      try { return JSON.stringify(v); } catch { return ''; }
+    }
+    return String(v);
+  };
+
+  const sessionId =
+    cd.sessionId ||
+    cd.session_id ||
+    body.sessionId ||
+    body.session_id ||
+    body.contact?.id ||
+    cd.contact_id ||
+    body.contactId ||
+    body.contact_id ||
+    null;
+
+  const contactId =
+    cd.contactId ||
+    cd.contact_id ||
+    body.contactId ||
+    body.contact_id ||
+    body.contact?.id ||
+    null;
+
+  const contactName =
+    cd.contactName ||
+    cd.contact_name ||
+    body.contactName ||
+    body.contact_name ||
+    body.contact?.name ||
+    body.full_name ||
+    [body.first_name, body.last_name].filter(Boolean).join(' ').trim() ||
+    body.name ||
+    null;
+
+  const inputMessage = coerceText(
+    cd.message ||
+    cd.text ||
+    cd.body ||
+    body.message ||           // could be string or { body: ... }
+    body.text ||
+    body.input ||
+    body.message_body ||
+    ''
+  );
+
   return {
-    sessionId:
-      body.sessionId ||
-      body.session_id ||
-      body.contact?.id ||
-      body.contactId ||
-      body.contact_id ||
-      null,
-    contactId: body.contactId || body.contact_id || body.contact?.id || null,
-    contactName:
-      body.contactName ||
-      body.contact_name ||
-      body.contact?.name ||
-      body.name ||
-      null,
-    inputMessage:
-      body.message ||
-      body.text ||
-      body.input ||
-      body.body ||
-      body.message_body ||
-      ''
+    sessionId: sessionId ? String(sessionId) : null,
+    contactId: contactId ? String(contactId) : null,
+    contactName: contactName ? String(contactName) : null,
+    inputMessage
   };
 }
 
