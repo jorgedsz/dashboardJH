@@ -34,4 +34,9 @@ export const messagesAPI = {
   stats: (params) => api.get('/messages/stats', { params })
 };
 
+export const callsAPI = {
+  list: (params) => api.get('/calls', { params }),
+  stats: (params) => api.get('/calls/stats', { params })
+};
+
 export default api;

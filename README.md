@@ -106,6 +106,47 @@ reply has two paths:
    { "errorMessage": "OpenAI timed out" }
    ```
 
+## Calls ingest + pre-call gate (sword-ai integration)
+
+The dashboard receives every VAPI call from the sword-ai backend at:
+
+```
+POST {API_BASE}/api/calls/ingest
+Header: x-ingest-secret: <INGEST_SECRET>
+Body  : {
+  "vapiCallId": "...",          // idempotency key
+  "agentId": "...", "agentName": "...",
+  "contactId": "...", "contactName": "...",
+  "customerNumber": "+57...", "fromNumber": "+1...",
+  "durationSeconds": 124,
+  "outcome": "answered" | "no_answer" | "voicemail" | "failed",
+  "endedReason": "...",
+  "summary": "...", "transcript": "...", "recordingUrl": "..."
+}
+```
+
+Cost is computed at ingest time as `durationSeconds / 60 * CALL_RATE_PER_MINUTE`
+and snapshotted on the row, so changing the env later doesn't rewrite
+historical totals. Repeat ingests of the same `vapiCallId` update non-cost
+fields (transcripts, summaries) without double-debiting.
+
+Pre-call gate (optional; sword-ai can call this before starting an outbound):
+
+```
+GET {API_BASE}/api/calls/check-balance?estimatedMinutes=5
+Header: x-ingest-secret: <INGEST_SECRET>
+→ {
+  "hasBalance": true,
+  "availableBalance": 12.40,
+  "ratePerMinute": 0.10,
+  "estimatedMinutes": 5,
+  "estimatedCost": 0.50,
+  "noBalanceMessage": "Lo siento, tu cuenta no tiene saldo…"
+}
+```
+
+If `estimatedMinutes` is omitted, the gate falls back to "is balance > 0".
+
 ## Recharge webhook
 
 ```

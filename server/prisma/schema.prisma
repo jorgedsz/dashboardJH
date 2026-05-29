@@ -72,3 +72,34 @@ model Message {
   @@index([contactId, createdAt])
   @@index([status, createdAt])
 }
+
+// One row per VAPI call forwarded by the sword-ai backend after the call
+// ends. Balance is shared with Message (single availableBalance on the
+// owner row); per-minute rate is read from env at ingest time so a future
+// rate change doesn't rewrite historical costs.
+model Call {
+  id              Int      @id @default(autoincrement())
+  vapiCallId      String?  @unique
+  agentId         String?  // id of the sword-ai agent that placed the call
+  agentName       String?
+  contactId       String?
+  contactName     String?
+  customerNumber  String?  // the dialed number
+  fromNumber      String?  // the agent-owned line that placed the call
+  durationSeconds Int      @default(0)
+  costCharged     Float    @default(0)
+  ratePerMinute   Float    @default(0) // snapshot of the rate at ingest time
+  // answered | no_answer | voicemail | failed | unknown
+  outcome         String   @default("unknown")
+  endedReason     String?
+  summary         String?  @db.Text
+  transcript      String?  @db.Text
+  recordingUrl    String?
+  rawPayload      String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([agentId, createdAt])
+  @@index([contactId, createdAt])
+  @@index([outcome, createdAt])
+}
